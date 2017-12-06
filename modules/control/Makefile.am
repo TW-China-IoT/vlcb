@@ -67,3 +67,13 @@ if HAVE_WIN32_DESKTOP
 control_LTLIBRARIES += libntservice_plugin.la
 control_LTLIBRARIES += libwin_hotkeys_plugin.la libwin_msg_plugin.la
 endif
+
+libbluetooth_plugin_la_SOURCES = \
+	control/bluetooth/bluetooth_msg.m \
+	control/bluetooth/core_bluetooth_peripheral_server.m
+libbluetooth_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS)
+libbluetooth_plugin_la_LIBADD = $(AM_LIBADD)
+libbluetooth_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(controldir)' -Wl,-framework,AppKit -Wl,-framework,CoreBluetooth
+libbluetooth_plugin_la_DEPENDENCIES =
+# Always compile the hello module:
+control_LTLIBRARIES += libbluetooth_plugin.la
