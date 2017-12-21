@@ -34,6 +34,8 @@ static void Close(vlc_object_t *);
 static int InitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int **ppi_socket);
 static void ExitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int *pi_socket, int i_socket);
 static void *Run( void *data );
+static int  Quit( vlc_object_t *, char const *,
+        vlc_value_t, vlc_value_t, void * );
 
 #define UNIX_TEXT N_("UNIX socket event output")
 #define UNIX_LONGTEXT N_("Send event over a Unix socket rather than stdin.")
@@ -262,6 +264,19 @@ static void ExitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int *pi_s
 }
 
 /*****************************************************************************
+ * RegisterCallbacks: Register callbacks to dynamic variables
+ *****************************************************************************/
+static void RegisterCallbacks( intf_thread_t *p_intf )
+{
+    /* Register commands that will be cleaned up upon object destruction */
+#define ADD( name, type, target )                                   \
+    var_Create( p_intf, name, VLC_VAR_ ## type | VLC_VAR_ISCOMMAND ); \
+    var_AddCallback( p_intf, name, target, NULL );
+    ADD( "quit", VOID, Quit )
+#undef ADD
+}
+
+/*****************************************************************************
  * Run: rc thread
  *****************************************************************************
  * This part of the interface is in a separate thread so that we can call
@@ -269,6 +284,40 @@ static void ExitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int *pi_s
  *****************************************************************************/
 static void *Run( void *data )
 {
+    intf_thread_t *p_intf = data;
+    intf_sys_t *p_sys = p_intf->p_sys;
+    int  canc = vlc_savecancel( );
+
+    /* Register commands that will be cleaned up upon object destruction */
+    RegisterCallbacks( p_intf );
+
+    for ( ;; ) {
+        vlc_restorecancel( canc );
+        if( p_sys->pi_socket_listen != NULL && p_sys->i_socket == -1 )
+        {
+            p_sys->i_socket =
+                net_Accept( p_intf, p_sys->pi_socket_listen );
+            if( p_sys->i_socket == -1 ) continue;
+        }
+        canc = vlc_savecancel( );
+    }
+
+    msg_Info(p_intf, "( stop state: 0 )" );
+    msg_Info(p_intf, "( quit )" );
+
+    vlc_restorecancel( canc );
+
+    return NULL;
+}
+
+static int Quit( vlc_object_t *p_this, char const *psz_cmd,
+        vlc_value_t oldval, vlc_value_t newval, void *p_data )
+{
+    VLC_UNUSED(p_data); VLC_UNUSED(psz_cmd);
+    VLC_UNUSED(oldval); VLC_UNUSED(newval);
+
+    libvlc_Quit( p_this->obj.libvlc );
+    return VLC_SUCCESS;
 }
 
 @implementation LXCBAppDelegate
