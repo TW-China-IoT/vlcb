@@ -33,6 +33,7 @@ static int Open(vlc_object_t *);
 static void Close(vlc_object_t *);
 static int InitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int **ppi_socket);
 static void ExitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int *pi_socket, int i_socket);
+static void *Run( void *data );
 
 #define UNIX_TEXT N_("UNIX socket event output")
 #define UNIX_LONGTEXT N_("Send event over a Unix socket rather than stdin.")
@@ -73,6 +74,8 @@ struct intf_sys_t
     int i_socket;
     char *psz_unix_path;
     char *psz_service_name;
+    vlc_thread_t thread;
+
     LXCBAppDelegate *p_bluetooth_delegate;
 };
 /* Internal state for an instance of the module */
@@ -136,6 +139,11 @@ static int Open(vlc_object_t *obj)
     p_sys->p_bluetooth_delegate.peripheral.characteristicUUID = [CBUUID UUIDWithString:@"b71e"];
     [p_sys->p_bluetooth_delegate.peripheral startAdvertising];
 
+    if( vlc_clone( &p_sys->thread, Run, p_intf, VLC_THREAD_PRIORITY_LOW ) )
+        abort();
+
+    msg_Info(p_intf, "Bluetooth event interface initialized");
+
     return VLC_SUCCESS;
 
 error:
@@ -156,6 +164,9 @@ static void Close(vlc_object_t *obj)
 {
     intf_thread_t *p_intf = (intf_thread_t *)obj;
     intf_sys_t *p_sys = p_intf->p_sys;
+
+    vlc_cancel( p_sys->thread );
+    vlc_join( p_sys->thread, NULL );
 
     /* Free internal state */
     [p_sys->p_bluetooth_delegate.peripheral release];
@@ -248,6 +259,16 @@ static void ExitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int *pi_s
         unlink(psz_unix_path );
 #endif
     }
+}
+
+/*****************************************************************************
+ * Run: rc thread
+ *****************************************************************************
+ * This part of the interface is in a separate thread so that we can call
+ * exec() from within it without annoying the rest of the program.
+ *****************************************************************************/
+static void *Run( void *data )
+{
 }
 
 @implementation LXCBAppDelegate
