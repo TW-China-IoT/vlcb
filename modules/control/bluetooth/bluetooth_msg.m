@@ -31,8 +31,6 @@
 /* Forward declarations */
 static int Open(vlc_object_t *);
 static void Close(vlc_object_t *);
-static int  ItemChange( vlc_object_t *, const char *,
-        vlc_value_t, vlc_value_t, void * );
 static int InitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int **ppi_socket);
 static void ExitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int *pi_socket, int i_socket);
 
@@ -138,8 +136,6 @@ static int Open(vlc_object_t *obj)
     p_sys->p_bluetooth_delegate.peripheral.characteristicUUID = [CBUUID UUIDWithString:@"b71e"];
     [p_sys->p_bluetooth_delegate.peripheral startAdvertising];
 
-    var_AddCallback( pl_Get( p_intf ), "item-change", &ItemChange, p_intf );
-
     return VLC_SUCCESS;
 
 error:
@@ -161,8 +157,6 @@ static void Close(vlc_object_t *obj)
     intf_thread_t *p_intf = (intf_thread_t *)obj;
     intf_sys_t *p_sys = p_intf->p_sys;
 
-    var_DelCallback( pl_Get(p_intf), "item-change", &ItemChange, p_intf );
-
     /* Free internal state */
     [p_sys->p_bluetooth_delegate.peripheral release];
     [p_sys->p_bluetooth_delegate release];
@@ -177,61 +171,8 @@ static void Close(vlc_object_t *obj)
     free(p_sys);
 }
 
-static int ItemChange( vlc_object_t *p_this, const char *psz_var,
-                       vlc_value_t oldval, vlc_value_t newval, void *param )
-{
-    VLC_UNUSED(psz_var);
-    VLC_UNUSED(oldval);
-    VLC_UNUSED(newval);
-
-    int64_t i_time = 0LL;
-    input_item_t *p_item = NULL;
-    intf_thread_t *p_intf = (intf_thread_t *)param;
-    char *psz_title = NULL;
-
-    msg_Info(p_intf, "some item changed");
-
-    playlist_Unlock( (playlist_t *)p_this );    /* playlist_CurrentInput hangs sometimes */
-    input_thread_t *p_input = playlist_CurrentInput( (playlist_t *)p_this );
-
-    if( !p_input )
-        return VLC_SUCCESS;
-    //if( p_input->b_dead )
-    //{
-        //vlc_object_release( p_input );
-        //return VLC_SUCCESS;
-    //}
-    p_item = input_GetItem( p_input );
-    if( !p_item || !p_item->psz_uri || !*p_item->psz_uri )
-    {
-        vlc_object_release( p_input );
-        return VLC_SUCCESS;
-    }
-    /* Get title */
-    psz_title = input_item_GetNowPlayingFb( p_item );
-    if( !psz_title )
-        psz_title = input_item_GetTitleFbName( p_item );
-
-    if( EMPTY_STR( psz_title ) )
-    {
-        free( psz_title );
-        return VLC_SUCCESS;
-    }
-    msg_Info(p_intf, psz_title);
-    free(psz_title);
-
-    if( VLC_SUCCESS == input_Control( p_input, INPUT_GET_TIME, &i_time) )
-    {
-        //TODO send new video position to central device
-        msg_Info(p_intf, "send posotion information %lld", i_time);
-        //NSString *s_pos = [NSString stringWithFormat:@"%f", f_pos];
-        //[p_intf->p_sys->bluetooth_delegate sendMessage:s_pos];
-    }
-
-    vlc_object_release( p_input );
-
-    return VLC_SUCCESS;
-}
+//NSString *s_pos = [NSString stringWithFormat:@"%f", f_pos];
+//[p_intf->p_sys->bluetooth_delegate sendMessage:s_pos];
 
 static int InitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int **ppi_socket)
 {
