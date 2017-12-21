@@ -55,7 +55,8 @@ vlc_module_end ()
 
 struct intf_sys_t
 {
-    LXCBAppDelegate *bluetooth_delegate;
+    char *psz_service_name;
+    LXCBAppDelegate *p_bluetooth_delegate;
 };
 /* Internal state for an instance of the module */
 
@@ -64,44 +65,45 @@ struct intf_sys_t
  */
 static int Open(vlc_object_t *obj)
 {
-    intf_thread_t *intf = (intf_thread_t *)obj;
-    msg_Info(intf, "Hello with bluetooth rsync plugin.");
+    intf_thread_t *p_intf = (intf_thread_t *)obj;
+    msg_Info(p_intf, "Hello with bluetooth rsync plugin.");
 
     /* Allocate internal state */
-    intf_sys_t *sys = malloc(sizeof (*sys));
-    if (unlikely(sys == NULL))
+    intf_sys_t *p_sys = malloc(sizeof (*p_sys));
+    if (unlikely(p_sys == NULL))
         return VLC_ENOMEM;
-    intf->p_sys = sys;
+    p_intf->p_sys = p_sys;
 
     /* Read settings */
-    char *serviceName = var_InheritString(intf, "serviceName");
-    if (serviceName == NULL)
+    char *psz_service_name = var_InheritString(p_intf, "serviceName");
+    if (psz_service_name == NULL)
     {
-        msg_Err(intf, "service name not defined");
+        msg_Err(p_intf, "service name not defined");
         goto error;
     }
 
-    sys->bluetooth_delegate = [[LXCBAppDelegate alloc] initWithInterfaceThread:intf];
-    if( !sys->bluetooth_delegate )
+    p_sys->p_bluetooth_delegate = [[LXCBAppDelegate alloc] initWithInterfaceThread:p_intf];
+    if( !p_sys->p_bluetooth_delegate )
     {
-        free(sys);
-        free(serviceName);
-        msg_Err(intf, "create delegate application failed");
+        free(p_sys);
+        free(psz_service_name);
+        msg_Err(p_intf, "create delegate application failed");
         return VLC_ENOMEM;
     }
 
-    sys->bluetooth_delegate.peripheral = [[LXCBPeripheralServer alloc] initWithDelegate:sys->bluetooth_delegate];
-    sys->bluetooth_delegate.peripheral.serviceName = [NSString stringWithFormat:@"%s", serviceName];
-    sys->bluetooth_delegate.peripheral.serviceUUID = [CBUUID UUIDWithString:@"7e57"];
-    sys->bluetooth_delegate.peripheral.characteristicUUID = [CBUUID UUIDWithString:@"b71e"];
-    [sys->bluetooth_delegate.peripheral startAdvertising];
+    p_sys->psz_service_name = psz_service_name;
+    p_sys->p_bluetooth_delegate.peripheral = [[LXCBPeripheralServer alloc] initWithDelegate:p_sys->p_bluetooth_delegate];
+    p_sys->p_bluetooth_delegate.peripheral.serviceName = [NSString stringWithFormat:@"%s", psz_service_name];
+    p_sys->p_bluetooth_delegate.peripheral.serviceUUID = [CBUUID UUIDWithString:@"7e57"];
+    p_sys->p_bluetooth_delegate.peripheral.characteristicUUID = [CBUUID UUIDWithString:@"b71e"];
+    [p_sys->p_bluetooth_delegate.peripheral startAdvertising];
 
-    var_AddCallback( pl_Get( intf ), "item-change", &ItemChange, intf );
+    var_AddCallback( pl_Get( p_intf ), "item-change", &ItemChange, p_intf );
 
     return VLC_SUCCESS;
 
 error:
-    free(sys);
+    free(p_sys);
     return VLC_EGENERIC;    
 }
 
@@ -110,15 +112,18 @@ error:
  */
 static void Close(vlc_object_t *obj)
 {
-    intf_thread_t *intf = (intf_thread_t *)obj;
-    intf_sys_t *sys = intf->p_sys;
+    intf_thread_t *p_intf = (intf_thread_t *)obj;
+    intf_sys_t *p_sys = p_intf->p_sys;
 
-    var_DelCallback( pl_Get(intf), "item-change", &ItemChange, intf );
+    var_DelCallback( pl_Get(p_intf), "item-change", &ItemChange, p_intf );
 
     /* Free internal state */
-    [sys->bluetooth_delegate.peripheral release];
-    [sys->bluetooth_delegate release];
-    free(sys);
+    [p_sys->p_bluetooth_delegate.peripheral release];
+    [p_sys->p_bluetooth_delegate release];
+    if (p_sys->psz_service_name != NULL) {
+        free(p_sys->psz_service_name);
+    }
+    free(p_sys);
 }
 
 static int ItemChange( vlc_object_t *p_this, const char *psz_var,
