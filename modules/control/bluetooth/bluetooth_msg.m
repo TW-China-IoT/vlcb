@@ -28,6 +28,8 @@
 #    include <sys/un.h>
 #endif
 
+#define MAX_LINE_LENGTH 1024
+
 /* Forward declarations */
 static int Open(vlc_object_t *);
 static void Close(vlc_object_t *);
@@ -36,6 +38,7 @@ static void ExitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int *pi_s
 static void *Run( void *data );
 static int  Quit( vlc_object_t *, char const *,
         vlc_value_t, vlc_value_t, void * );
+static bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size );
 
 #define UNIX_TEXT N_("UNIX socket event output")
 #define UNIX_LONGTEXT N_("Send event over a Unix socket rather than stdin.")
@@ -76,7 +79,9 @@ struct intf_sys_t
     int i_socket;
     char *psz_unix_path;
     char *psz_service_name;
+
     vlc_thread_t thread;
+    playlist_t *p_playlist;
 
     LXCBAppDelegate *p_bluetooth_delegate;
 };
@@ -89,6 +94,7 @@ static int Open(vlc_object_t *obj)
 {
     intf_thread_t *p_intf = (intf_thread_t *)obj;
     msg_Info(p_intf, "Hello with bluetooth rsync plugin.");
+    playlist_t *p_playlist = pl_Get( p_intf );
     char *psz_service_name = NULL, *psz_unix_path = NULL;
     int  *pi_socket = NULL;
 
@@ -140,6 +146,8 @@ static int Open(vlc_object_t *obj)
     p_sys->p_bluetooth_delegate.peripheral.serviceUUID = [CBUUID UUIDWithString:@"7e57"];
     p_sys->p_bluetooth_delegate.peripheral.characteristicUUID = [CBUUID UUIDWithString:@"b71e"];
     [p_sys->p_bluetooth_delegate.peripheral startAdvertising];
+
+    p_sys->p_playlist = p_playlist;
 
     if( vlc_clone( &p_sys->thread, Run, p_intf, VLC_THREAD_PRIORITY_LOW ) )
         abort();
@@ -286,12 +294,20 @@ static void *Run( void *data )
 {
     intf_thread_t *p_intf = data;
     intf_sys_t *p_sys = p_intf->p_sys;
+
+    char p_buffer[ MAX_LINE_LENGTH + 1 ];
+
+    int i_size = 0;
     int  canc = vlc_savecancel( );
+    p_buffer[0] = 0;
 
     /* Register commands that will be cleaned up upon object destruction */
     RegisterCallbacks( p_intf );
 
     for ( ;; ) {
+        char *psz_cmd = NULL;
+        bool b_complete;
+
         vlc_restorecancel( canc );
         if( p_sys->pi_socket_listen != NULL && p_sys->i_socket == -1 )
         {
@@ -299,7 +315,32 @@ static void *Run( void *data )
                 net_Accept( p_intf, p_sys->pi_socket_listen );
             if( p_sys->i_socket == -1 ) continue;
         }
+
+        b_complete = ReadCommand( p_intf, p_buffer, &i_size );
         canc = vlc_savecancel( );
+
+        /* Is there something to do? */
+        if( !b_complete ) continue;
+
+        /* Skip heading spaces */
+        psz_cmd = p_buffer;
+        while( *psz_cmd == ' ' )
+        {
+            psz_cmd++;
+        }
+
+        if( !strcmp( psz_cmd, "logout" ) )
+        {
+            /* Close connection */
+            if( p_sys->i_socket != -1 )
+            {
+                net_Close( p_sys->i_socket );
+                p_sys->i_socket = -1;
+            }
+        }
+
+        /* Command processed */
+        i_size = 0; p_buffer[0] = 0;
     }
 
     msg_Info(p_intf, "( stop state: 0 )" );
@@ -318,6 +359,57 @@ static int Quit( vlc_object_t *p_this, char const *psz_cmd,
 
     libvlc_Quit( p_this->obj.libvlc );
     return VLC_SUCCESS;
+}
+
+bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size )
+{
+#if defined(_WIN32) && !VLC_WINSTORE_APP
+    if( p_intf->p_sys->i_socket == -1 && !p_intf->p_sys->b_quiet )
+        return ReadWin32( p_intf, p_buffer, pi_size );
+    else if( p_intf->p_sys->i_socket == -1 )
+    {
+        msleep( INTF_IDLE_SLEEP );
+        return false;
+    }
+#endif
+
+    while( *pi_size < MAX_LINE_LENGTH )
+    {
+        if( p_intf->p_sys->i_socket == -1 )
+        {
+            if( read( 0/*STDIN_FILENO*/, p_buffer + *pi_size, 1 ) <= 0 )
+            {   /* Standard input closed: exit */
+                libvlc_Quit( p_intf->obj.libvlc );
+                p_buffer[*pi_size] = 0;
+                return true;
+            }
+        }
+        else
+        {   /* Connection closed */
+            if( net_Read( p_intf, p_intf->p_sys->i_socket, p_buffer + *pi_size,
+                          1 ) <= 0 )
+            {
+                net_Close( p_intf->p_sys->i_socket );
+                p_intf->p_sys->i_socket = -1;
+                p_buffer[*pi_size] = 0;
+                return true;
+            }
+        }
+
+        if( p_buffer[ *pi_size ] == '\r' || p_buffer[ *pi_size ] == '\n' )
+            break;
+
+        (*pi_size)++;
+    }
+
+    if( *pi_size == MAX_LINE_LENGTH ||
+        p_buffer[ *pi_size ] == '\r' || p_buffer[ *pi_size ] == '\n' )
+    {
+        p_buffer[ *pi_size ] = 0;
+        return true;
+    }
+
+    return false;
 }
 
 @implementation LXCBAppDelegate
