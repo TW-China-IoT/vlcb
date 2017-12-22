@@ -52,8 +52,8 @@ vlc_module_begin()
     set_category(CAT_INTERFACE)
     set_subcategory(SUBCAT_INTERFACE_CONTROL)
     add_string("serviceName", "Video_Position", "Service Name", "", false)
-    add_string("serviceUUID", "7e57", "Service UUID", "", false)
-    add_string("characteristicUUID", "b71e", "CBCharacteristic UUID", "", false)
+    add_string("serviceUUID", "7315D272-ACC3-443D-9214-017D6EAFAD50", "Service UUID", "", false)
+    add_string("characteristicUUID", "64CF3C7A-AF89-4435-825E-A22D71ACE8EA", "CBCharacteristic UUID", "", false)
     add_string("rc-unix", "/usr/local/vlc_event", UNIX_TEXT, UNIX_LONGTEXT, false)
 vlc_module_end ()
 
@@ -79,6 +79,8 @@ struct intf_sys_t
     int i_socket;
     char *psz_unix_path;
     char *psz_service_name;
+    char *psz_service_uuid;
+    char *psz_characteristic_uuid;
 
     vlc_thread_t thread;
     playlist_t *p_playlist;
@@ -96,6 +98,7 @@ static int Open(vlc_object_t *obj)
     msg_Info(p_intf, "Hello with bluetooth rsync plugin.");
     playlist_t *p_playlist = pl_Get( p_intf );
     char *psz_service_name = NULL, *psz_unix_path = NULL;
+    char *psz_service_uuid = NULL, *psz_characteristic_uuid = NULL;
     int  *pi_socket = NULL;
 
     /* Allocate internal state */
@@ -109,6 +112,20 @@ static int Open(vlc_object_t *obj)
     if (psz_service_name == NULL)
     {
         msg_Err(p_intf, "service name not defined");
+        goto error;
+    }
+
+    psz_service_uuid = var_InheritString(p_intf, "serviceUUID");
+    if (psz_service_uuid == NULL)
+    {
+        msg_Err(p_intf, "service uuid not defined");
+        goto error;
+    }
+
+    psz_characteristic_uuid = var_InheritString(p_intf, "characteristicUUID");
+    if (psz_characteristic_uuid == NULL)
+    {
+        msg_Err(p_intf, "characteristic uuid not defined");
         goto error;
     }
 
@@ -130,6 +147,8 @@ static int Open(vlc_object_t *obj)
     {
         free(p_sys);
         free(psz_service_name);
+        free(psz_service_uuid);
+        free(psz_characteristic_uuid);
         ExitUnixSocket(p_intf, psz_unix_path, pi_socket, -1);
         free(psz_unix_path);
         msg_Err(p_intf, "create delegate application failed");
@@ -141,10 +160,14 @@ static int Open(vlc_object_t *obj)
     p_sys->psz_unix_path = psz_unix_path;
 
     p_sys->psz_service_name = psz_service_name;
+    p_sys->psz_service_uuid = psz_service_uuid;
+    p_sys->psz_characteristic_uuid = psz_characteristic_uuid;
     p_sys->p_bluetooth_delegate.peripheral = [[LXCBPeripheralServer alloc] initWithDelegate:p_sys->p_bluetooth_delegate];
     p_sys->p_bluetooth_delegate.peripheral.serviceName = [NSString stringWithFormat:@"%s", psz_service_name];
-    p_sys->p_bluetooth_delegate.peripheral.serviceUUID = [CBUUID UUIDWithString:@"7e57"];
-    p_sys->p_bluetooth_delegate.peripheral.characteristicUUID = [CBUUID UUIDWithString:@"b71e"];
+    NSString *serviceUUID = [NSString stringWithFormat:@"%s", psz_service_uuid];
+    p_sys->p_bluetooth_delegate.peripheral.serviceUUID = [CBUUID UUIDWithString:serviceUUID];
+    NSString *characteristicUUID = [NSString stringWithFormat:@"%s", psz_characteristic_uuid];
+    p_sys->p_bluetooth_delegate.peripheral.characteristicUUID = [CBUUID UUIDWithString:characteristicUUID];
     [p_sys->p_bluetooth_delegate.peripheral startAdvertising];
 
     p_sys->p_playlist = p_playlist;
@@ -159,6 +182,12 @@ static int Open(vlc_object_t *obj)
 error:
     if (psz_service_name != NULL) {
         free(psz_service_name);
+    }
+    if (psz_service_uuid != NULL) {
+        free(psz_service_uuid);
+    }
+    if (psz_characteristic_uuid != NULL) {
+        free(psz_characteristic_uuid);
     }
     if (psz_unix_path != NULL) {
         free(psz_unix_path);
@@ -184,6 +213,12 @@ static void Close(vlc_object_t *obj)
     if (p_sys->psz_service_name != NULL) {
         free(p_sys->psz_service_name);
     }
+    if (p_sys->psz_service_uuid != NULL) {
+        free(p_sys->psz_service_uuid);
+    }
+    if (p_sys->psz_characteristic_uuid != NULL) {
+        free(p_sys->psz_characteristic_uuid);
+    }
 
     ExitUnixSocket(p_intf, p_sys->psz_unix_path, p_sys->pi_socket_listen, p_sys->i_socket);
     if (p_sys->psz_unix_path != NULL) {
@@ -191,9 +226,6 @@ static void Close(vlc_object_t *obj)
     }
     free(p_sys);
 }
-
-//NSString *s_pos = [NSString stringWithFormat:@"%f", f_pos];
-//[p_intf->p_sys->bluetooth_delegate sendMessage:s_pos];
 
 static int InitUnixSocket(intf_thread_t *p_intf, char *psz_unix_path, int **ppi_socket)
 {
@@ -298,6 +330,7 @@ static void *Run( void *data )
     char p_buffer[ MAX_LINE_LENGTH + 1 ];
 
     int i_size = 0;
+    int count = 0;
     int  canc = vlc_savecancel( );
     p_buffer[0] = 0;
 
@@ -305,6 +338,7 @@ static void *Run( void *data )
     RegisterCallbacks( p_intf );
 
     for ( ;; ) {
+        msg_Info(p_intf, "loop...");
         char *psz_cmd = NULL;
         bool b_complete;
 
@@ -341,6 +375,9 @@ static void *Run( void *data )
 
         /* Command processed */
         i_size = 0; p_buffer[0] = 0;
+
+        NSString *message = [NSString stringWithFormat:@"%s %d\n", "Time to go!", count++];
+        [p_sys->p_bluetooth_delegate.peripheral sendToSubscribers:[message dataUsingEncoding:NSUTF8StringEncoding]];
     }
 
     msg_Info(p_intf, "( stop state: 0 )" );
