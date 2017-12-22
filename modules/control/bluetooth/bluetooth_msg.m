@@ -54,7 +54,7 @@ vlc_module_begin()
     add_string("serviceName", "Video_Position", "Service Name", "", false)
     add_string("serviceUUID", "7315D272-ACC3-443D-9214-017D6EAFAD50", "Service UUID", "", false)
     add_string("characteristicUUID", "64CF3C7A-AF89-4435-825E-A22D71ACE8EA", "CBCharacteristic UUID", "", false)
-    add_string("rc-unix", "/usr/local/vlc_event", UNIX_TEXT, UNIX_LONGTEXT, false)
+    add_string("rc-unix", "/usr/local/var/vlc_event", UNIX_TEXT, UNIX_LONGTEXT, false)
 vlc_module_end ()
 
 /*****************************************************************************
