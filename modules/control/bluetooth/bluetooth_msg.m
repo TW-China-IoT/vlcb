@@ -9,8 +9,11 @@
 #endif
 
 #import "core_bluetooth_peripheral_server.h"
+#include "jsonparser.h"
 
 #include <stdlib.h>
+#include <sys/stat.h>
+
 /* VLC core API headers */
 #include <vlc_common.h>
 #include <vlc_plugin.h>
@@ -29,6 +32,7 @@
 #endif
 
 #define MAX_LINE_LENGTH 1024
+#define CONFIG_FILE_NAME "config.json"
 
 /* Forward declarations */
 static int Open(vlc_object_t *);
@@ -39,6 +43,7 @@ static void *Run( void *data );
 static int  Quit( vlc_object_t *, char const *,
         vlc_value_t, vlc_value_t, void * );
 static bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size );
+static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name);
 
 #define UNIX_TEXT N_("UNIX socket event output")
 #define UNIX_LONGTEXT N_("Send event over a Unix socket rather than stdin.")
@@ -86,6 +91,8 @@ struct intf_sys_t
     playlist_t *p_playlist;
 
     LXCBAppDelegate *p_bluetooth_delegate;
+
+    json_value *p_events;
 };
 /* Internal state for an instance of the module */
 
@@ -172,6 +179,8 @@ static int Open(vlc_object_t *obj)
 
     p_sys->p_playlist = p_playlist;
 
+    p_sys->p_events = NULL;
+
     if( vlc_clone( &p_sys->thread, Run, p_intf, VLC_THREAD_PRIORITY_LOW ) )
         abort();
 
@@ -224,6 +233,12 @@ static void Close(vlc_object_t *obj)
     if (p_sys->psz_unix_path != NULL) {
         free(p_sys->psz_unix_path);
     }
+
+    if (p_intf->p_sys->p_events != NULL) {
+        json_value_free(p_intf->p_sys->p_events);
+        p_intf->p_sys->p_events = NULL;
+    }
+
     free(p_sys);
 }
 
@@ -447,6 +462,57 @@ bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size )
     }
 
     return false;
+}
+
+static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name)
+{
+    FILE *fp;
+    struct stat filestatus;
+    int file_size;
+    char* file_contents;
+    json_char* json;
+
+    if (p_intf->p_sys->p_events != NULL) {
+        json_value_free(p_intf->p_sys->p_events);
+        p_intf->p_sys->p_events = NULL;
+    }
+
+    if ( stat(config_file_name, &filestatus) != 0) {
+        msg_Err(p_intf, "File %s not found\n", config_file_name);
+        return VLC_EGENERIC;
+    }
+    file_size = filestatus.st_size;
+    file_contents = (char*)malloc(filestatus.st_size);
+    if ( file_contents == NULL) {
+        msg_Err(p_intf, "Memory error: unable to allocate %d bytes\n", file_size);
+        return VLC_EGENERIC;
+    }
+
+    fp = fopen(config_file_name, "rt");
+    if (fp == NULL) {
+        msg_Err(p_intf, "Unable to open %s\n", config_file_name);
+        free(file_contents);
+        return VLC_EGENERIC;
+    }
+    if ( fread(file_contents, file_size, 1, fp) != 1 ) {
+        msg_Err(p_intf, "Unable t read content of %s\n", config_file_name);
+        fclose(fp);
+        free(file_contents);
+        return VLC_EGENERIC;
+    }
+    fclose(fp);
+
+    msg_Info(p_intf, "%s\n", file_contents);
+
+    json = (json_char*)file_contents;
+
+    p_intf->p_sys->p_events = json_parse(json, file_size);
+
+    if (p_intf->p_sys->p_events == NULL) {
+        msg_Err(p_intf, "Unable to parse data\n");
+    }
+
+    free(file_contents);
 }
 
 @implementation LXCBAppDelegate
