@@ -45,6 +45,11 @@ static int  Quit( vlc_object_t *, char const *,
 static bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size );
 static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name);
 
+static int  Input( vlc_object_t *, char const *, vlc_value_t, vlc_value_t, void * );
+static int InputEvent( vlc_object_t *p_this, char const *psz_cmd, 
+        vlc_value_t oldval, vlc_value_t newval, void *p_data );
+static void PositionChanged( intf_thread_t *p_intf, input_thread_t *p_input );
+
 #define UNIX_TEXT N_("UNIX socket event output")
 #define UNIX_LONGTEXT N_("Send event over a Unix socket rather than stdin.")
 
@@ -87,8 +92,10 @@ struct intf_sys_t
     char *psz_service_uuid;
     char *psz_characteristic_uuid;
 
+    vlc_mutex_t status_lock;
     vlc_thread_t thread;
     playlist_t *p_playlist;
+    input_thread_t *p_input;
 
     LXCBAppDelegate *p_bluetooth_delegate;
 
@@ -178,8 +185,11 @@ static int Open(vlc_object_t *obj)
     [p_sys->p_bluetooth_delegate.peripheral startAdvertising];
 
     p_sys->p_playlist = p_playlist;
+    p_sys->p_input = NULL;
 
     p_sys->p_events = NULL;
+
+    vlc_mutex_init( &p_sys->status_lock );
 
     if( vlc_clone( &p_sys->thread, Run, p_intf, VLC_THREAD_PRIORITY_LOW ) )
         abort();
@@ -216,6 +226,12 @@ static void Close(vlc_object_t *obj)
     vlc_cancel( p_sys->thread );
     vlc_join( p_sys->thread, NULL );
 
+    if( p_sys->p_input != NULL )
+    {
+        var_DelCallback( p_sys->p_input, "intf-event", InputEvent, p_intf );
+        vlc_object_release( p_sys->p_input );
+    }
+
     /* Free internal state */
     [p_sys->p_bluetooth_delegate.peripheral release];
     [p_sys->p_bluetooth_delegate release];
@@ -239,6 +255,7 @@ static void Close(vlc_object_t *obj)
         p_intf->p_sys->p_events = NULL;
     }
 
+    vlc_mutex_destroy( &p_sys->status_lock );
     free(p_sys);
 }
 
@@ -331,6 +348,17 @@ static void RegisterCallbacks( intf_thread_t *p_intf )
 #undef ADD
 }
 
+static void SetNonblocking(intf_thread_t *p_intf, int i_socket)
+{
+    int opts = fcntl(i_socket, F_GETFL);
+    if (opts >= 0) {
+        opts = opts | O_NONBLOCK;
+        if (fcntl(i_socket, F_SETFL, opts) < 0) {
+            msg_Err(p_intf, " fcntl(sock,SETFL,opts) failed ");
+        }
+    }
+}
+
 /*****************************************************************************
  * Run: rc thread
  *****************************************************************************
@@ -363,13 +391,45 @@ static void *Run( void *data )
             p_sys->i_socket =
                 net_Accept( p_intf, p_sys->pi_socket_listen );
             if( p_sys->i_socket == -1 ) continue;
+            SetNonblocking(p_intf, p_sys->i_socket);
         }
 
         b_complete = ReadCommand( p_intf, p_buffer, &i_size );
         canc = vlc_savecancel( );
 
+        /* Manage the input part */
+        if( p_sys->p_input == NULL )
+        {
+            p_sys->p_input = playlist_CurrentInput( p_sys->p_playlist );
+            /* New input has been registered */
+            if( p_sys->p_input )
+            {
+                char *psz_uri = input_item_GetURI( input_GetItem( p_sys->p_input ) );
+                msg_Info(p_intf, "( new input: %s )", psz_uri );
+                free( psz_uri );
+
+                var_AddCallback( p_sys->p_input, "intf-event", InputEvent, p_intf );
+            }
+        }
+
+        int state;
+        if( p_sys->p_input != NULL) {
+            state = var_GetInteger(p_sys->p_input, "state");
+            if (state == ERROR_S || state == END_S) {
+                var_DelCallback( p_sys->p_input, "intf-event", InputEvent, p_intf );
+                vlc_object_release( p_sys->p_input );
+                p_sys->p_input = NULL;
+
+                //p_sys->i_last_state = PLAYLIST_STOPPED;
+                msg_Info(p_intf, "( stop state: 0 )" );
+            }
+        }
+
         /* Is there something to do? */
-        if( !b_complete ) continue;
+        if( !b_complete ) {
+            sleep(1);
+            continue;
+        }
 
         /* Skip heading spaces */
         psz_cmd = p_buffer;
@@ -438,13 +498,17 @@ bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size )
         }
         else
         {   /* Connection closed */
-            if( net_Read( p_intf, p_intf->p_sys->i_socket, p_buffer + *pi_size,
+            if( read( p_intf->p_sys->i_socket, p_buffer + *pi_size,
                           1 ) <= 0 )
             {
-                net_Close( p_intf->p_sys->i_socket );
-                p_intf->p_sys->i_socket = -1;
-                p_buffer[*pi_size] = 0;
-                return true;
+                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    return false;
+                 } else {
+                     net_Close( p_intf->p_sys->i_socket );
+                     p_intf->p_sys->i_socket = -1;
+                     p_buffer[*pi_size] = 0;
+                     return true;
+                 }
             }
         }
 
@@ -462,6 +526,33 @@ bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size )
     }
 
     return false;
+}
+
+static int InputEvent( vlc_object_t *p_this, char const *psz_cmd,
+        vlc_value_t oldval, vlc_value_t newval, void *p_data )
+{
+    VLC_UNUSED(psz_cmd);
+    VLC_UNUSED(oldval);
+    input_thread_t *p_input = (input_thread_t*)p_this;
+    intf_thread_t *p_intf = p_data;
+
+    switch( newval.i_int ) {
+         case INPUT_EVENT_POSITION:
+            PositionChanged( p_intf, p_input );
+            break;
+         default:
+            break;
+    }
+    return VLC_SUCCESS;
+}
+
+static void PositionChanged( intf_thread_t *p_intf,
+        input_thread_t *p_input )
+{
+    vlc_mutex_lock( &p_intf->p_sys->status_lock );
+    msg_Info(p_intf, "( time: %"PRId64"s )",
+            (var_GetInteger( p_input, "time" ) / CLOCK_FREQ) );
+    vlc_mutex_unlock( &p_intf->p_sys->status_lock );
 }
 
 static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name)
