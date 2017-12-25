@@ -20,6 +20,7 @@
 #include <vlc_interface.h>
 #include <vlc_playlist.h>
 #include <vlc_input.h>
+#include <vlc_url.h>
 
 #include <vlc_network.h>
 
@@ -406,7 +407,28 @@ static void *Run( void *data )
             {
                 char *psz_uri = input_item_GetURI( input_GetItem( p_sys->p_input ) );
                 msg_Info(p_intf, "( new input: %s )", psz_uri );
-                free( psz_uri );
+                if (psz_uri != NULL) {
+                    char *psz_path = vlc_uri2path(psz_uri); 
+                    if (psz_path != NULL) {
+                        int length = strlen(psz_path);
+                        char *psz_config_uri = (char *)malloc(length + 5);
+                        if (psz_config_uri != NULL) {
+                            strcpy(psz_config_uri, psz_path);
+                            for (int i = length - 1; i > 0; i--) {
+                                if (psz_config_uri[i] == '.') {
+                                    psz_config_uri[i + 1] = '\0';
+                                    break;
+                                }
+                            }
+                            strcat(psz_config_uri , "json");
+                            msg_Info(p_intf, "( new config: %s )", psz_config_uri);
+                            ReadConfig(p_intf, psz_config_uri);
+                            free(psz_config_uri);
+                        }
+                        free(psz_path);
+                    }
+                    free( psz_uri );
+                }
 
                 var_AddCallback( p_sys->p_input, "intf-event", InputEvent, p_intf );
             }
