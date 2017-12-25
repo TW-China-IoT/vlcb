@@ -601,9 +601,11 @@ static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name)
 
     if (p_intf->p_sys->p_events == NULL) {
         msg_Err(p_intf, "Unable to parse data\n");
+        return VLC_EGENERIC;
     }
 
     free(file_contents);
+    return VLC_SUCCESS;
 }
 
 @implementation LXCBAppDelegate
