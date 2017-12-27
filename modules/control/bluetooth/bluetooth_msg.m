@@ -13,6 +13,7 @@
 
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <libgen.h>
 
 /* VLC core API headers */
 #include <vlc_common.h>
@@ -44,6 +45,7 @@ static void *Run( void *data );
 static int  Quit( vlc_object_t *, char const *,
         vlc_value_t, vlc_value_t, void * );
 static bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size );
+static bool WriteEvent( intf_thread_t *p_intf, char *p_buffer, int i_size );
 static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name);
 static void ProcessEvents(intf_thread_t *p_intf, json_value *value, int64_t video_time);
 
@@ -105,6 +107,7 @@ struct intf_sys_t
     int64_t i64_last_time;
 
     pid_t pid_hud_video_player;
+    char *psz_video_path;
 };
 /* Internal state for an instance of the module */
 
@@ -214,6 +217,7 @@ static int Open(vlc_object_t *obj)
     p_sys->p_events = NULL;
     p_sys->i64_last_time = -1;
     p_sys->pid_hud_video_player = 0;
+    p_sys->psz_video_path = NULL;
 
     vlc_mutex_init( &p_sys->status_lock );
 
@@ -407,7 +411,6 @@ static void *Run( void *data )
     char p_buffer[ MAX_LINE_LENGTH + 1 ];
 
     int i_size = 0;
-    int count = 0;
     int  canc = vlc_savecancel( );
     p_buffer[0] = 0;
 
@@ -415,7 +418,7 @@ static void *Run( void *data )
     RegisterCallbacks( p_intf );
 
     for ( ;; ) {
-        msg_Info(p_intf, "loop...");
+        //msg_Info(p_intf, "loop...");
         char *psz_cmd = NULL;
         bool b_complete;
 
@@ -461,6 +464,7 @@ static void *Run( void *data )
                             vlc_mutex_unlock( &p_intf->p_sys->status_lock );
                             free(psz_config_uri);
                         }
+                        p_sys->psz_video_path = dirname(psz_path);
                         free(psz_path);
                     }
                     free( psz_uri );
@@ -477,7 +481,7 @@ static void *Run( void *data )
                 var_DelCallback( p_sys->p_input, "intf-event", InputEvent, p_intf );
                 vlc_object_release( p_sys->p_input );
                 p_sys->p_input = NULL;
-
+                p_sys->psz_video_path = NULL;
                 //p_sys->i_last_state = PLAYLIST_STOPPED;
                 msg_Info(p_intf, "( stop state: 0 )" );
             }
@@ -508,9 +512,6 @@ static void *Run( void *data )
 
         /* Command processed */
         i_size = 0; p_buffer[0] = 0;
-
-        NSString *message = [NSString stringWithFormat:@"%s %d\n", "Time to go!", count++];
-        [p_sys->p_bluetooth_delegate.peripheral sendToSubscribers:[message dataUsingEncoding:NSUTF8StringEncoding]];
     }
 
     msg_Info(p_intf, "( stop state: 0 )" );
@@ -584,6 +585,33 @@ bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size )
     }
 
     return false;
+}
+
+static bool WriteEvent( intf_thread_t *p_intf, char *p_buffer, int i_size )
+{
+        if( p_intf->p_sys->i_socket == -1 )
+        {
+            if( write( 0/*STDIN_FILENO*/, p_buffer, i_size ) <= 0 )
+            {   /* Standard input closed: exit */
+                libvlc_Quit( p_intf->obj.libvlc );
+                return false;
+            }
+        }
+        else
+        {   /* Connection closed */
+            if( write( p_intf->p_sys->i_socket, p_buffer, i_size ) <= 0 )
+            {
+                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    return false;
+                 } else {
+                     net_Close( p_intf->p_sys->i_socket );
+                     p_intf->p_sys->i_socket = -1;
+                     return false;
+                 }
+            }
+        }
+
+    return true;
 }
 
 static int InputEvent( vlc_object_t *p_this, char const *psz_cmd,
@@ -670,6 +698,33 @@ static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name)
     return VLC_SUCCESS;
 }
 
+static void SendFilePathname(intf_thread_t *p_intf, const char *type, const char *psz_file_pathname)
+{
+    if (psz_file_pathname != NULL && p_intf->p_sys->psz_video_path != NULL && type != NULL) {
+        char *psz_full_file_pathname = (char *)malloc(MAX_LINE_LENGTH);
+        if (psz_full_file_pathname != NULL) {
+            snprintf(psz_full_file_pathname, MAX_LINE_LENGTH, "%s@%s/%s\n", type, p_intf->p_sys->psz_video_path, psz_file_pathname);
+            WriteEvent(p_intf, psz_full_file_pathname, strlen(psz_full_file_pathname));
+            free(psz_full_file_pathname);
+        }
+    }
+}
+
+static void ProcessEvent(intf_thread_t *p_intf, json_value *value)
+{
+    char *name = value->u.object.values[1].name;
+    if (0 == strcmp(name, "video_file")
+            || 0 == strcmp(name, "sound_file")) {
+        const char *psz_file_pathname = value->u.object.values[1].value->u.string.ptr;
+        SendFilePathname(p_intf, name, psz_file_pathname);
+    } else if (0 == strcmp(name, "message")) {
+        const char *message = value->u.object.values[1].value->u.string.ptr;
+        NSString *ns_message = [NSString stringWithFormat:@"%s\n", message];
+        [p_intf->p_sys->p_bluetooth_delegate.peripheral sendToSubscribers:[ns_message dataUsingEncoding:NSUTF8StringEncoding]];
+        msg_Info(p_intf, "send bluetooth message %s", message);
+    }
+}
+
 static void ProcessObject(intf_thread_t *p_intf, json_value* value, int64_t video_time)
 {
     int length, x;
@@ -680,6 +735,15 @@ static void ProcessObject(intf_thread_t *p_intf, json_value* value, int64_t vide
     for (x = 0; x < length; x++) {
         msg_Info(p_intf, "object[%d].name = %s", x, value->u.object.values[x].name);
         ProcessEvents(p_intf, value->u.object.values[x].value, video_time);
+    }
+    if (length > 1) {
+        if (0 == strcmp(value->u.object.values[0].name, "timestamp")) {
+            int64_t i64_timestamp = value->u.object.values[0].value->u.integer;
+            msg_Info(p_intf, "timestamp %lld", i64_timestamp);
+            if (i64_timestamp == video_time) {
+                ProcessEvent(p_intf, value);
+            }
+        }
     }
 }
 
