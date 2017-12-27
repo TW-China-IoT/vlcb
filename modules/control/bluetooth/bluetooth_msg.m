@@ -481,7 +481,7 @@ static void *Run( void *data )
 
         /* Is there something to do? */
         if( !b_complete ) {
-            sleep(1);
+            usleep(200000);
             continue;
         }
 
