@@ -101,8 +101,30 @@ struct intf_sys_t
     LXCBAppDelegate *p_bluetooth_delegate;
 
     json_value *p_events;
+    int64_t i64_last_time;
+
+    pid_t pid_hud_video_player;
 };
 /* Internal state for an instance of the module */
+
+static int StartHUDVideoPlayer(intf_thread_t *p_intf)
+{
+    pid_t processId;
+    if ((processId = fork()) == 0) {
+        char app[] = "/usr/local/bin/ffplay";
+        char * const argv[] = { app,
+            "/usr/local/share/bg.png", NULL };
+        if (execv(app, argv) < 0) {
+            msg_Err(p_intf, "execv error when start HUD video player");
+        }
+    } else if (processId < 0) {
+        msg_Err(p_intf, "fork error when start HUD video player");
+    } else {
+        p_intf->p_sys->pid_hud_video_player = processId;
+        return VLC_SUCCESS;
+    }
+    return VLC_EGENERIC;
+}
 
 /**
  * Starts our example interface.
@@ -189,11 +211,17 @@ static int Open(vlc_object_t *obj)
     p_sys->p_input = NULL;
 
     p_sys->p_events = NULL;
+    p_sys->i64_last_time = -1;
+    p_sys->pid_hud_video_player = 0;
 
     vlc_mutex_init( &p_sys->status_lock );
 
     if( vlc_clone( &p_sys->thread, Run, p_intf, VLC_THREAD_PRIORITY_LOW ) )
         abort();
+
+    if (StartHUDVideoPlayer(p_intf) != VLC_SUCCESS) {
+        abort();
+    }
 
     msg_Info(p_intf, "Bluetooth event interface initialized");
 
@@ -223,6 +251,10 @@ static void Close(vlc_object_t *obj)
 {
     intf_thread_t *p_intf = (intf_thread_t *)obj;
     intf_sys_t *p_sys = p_intf->p_sys;
+
+    if (p_sys->pid_hud_video_player != 0) {
+        kill(p_sys->pid_hud_video_player, SIGKILL);
+    }
 
     vlc_cancel( p_sys->thread );
     vlc_join( p_sys->thread, NULL );
