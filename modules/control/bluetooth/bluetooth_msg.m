@@ -45,6 +45,7 @@ static int  Quit( vlc_object_t *, char const *,
         vlc_value_t, vlc_value_t, void * );
 static bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size );
 static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name);
+static void ProcessEvents(intf_thread_t *p_intf, int64_t video_time);
 
 static int  Input( vlc_object_t *, char const *, vlc_value_t, vlc_value_t, void * );
 static int InputEvent( vlc_object_t *p_this, char const *psz_cmd, 
@@ -454,7 +455,10 @@ static void *Run( void *data )
                             }
                             strcat(psz_config_uri , "json");
                             msg_Info(p_intf, "( new config: %s )", psz_config_uri);
+                            vlc_mutex_lock( &p_intf->p_sys->status_lock );
+                            p_sys->i64_last_time = -1;
                             ReadConfig(p_intf, psz_config_uri);
+                            vlc_mutex_unlock( &p_intf->p_sys->status_lock );
                             free(psz_config_uri);
                         }
                         free(psz_path);
@@ -604,8 +608,12 @@ static void PositionChanged( intf_thread_t *p_intf,
         input_thread_t *p_input )
 {
     vlc_mutex_lock( &p_intf->p_sys->status_lock );
-    msg_Info(p_intf, "( time: %"PRId64"s )",
-            (var_GetInteger( p_input, "time" ) / CLOCK_FREQ) );
+    int64_t video_time = var_GetInteger(p_input, "time") / CLOCK_FREQ;
+    if (p_intf->p_sys->i64_last_time != video_time) {
+        msg_Info(p_intf, "( time: %"PRId64"s )", video_time );
+        p_intf->p_sys->i64_last_time = video_time;
+        ProcessEvents(p_intf, video_time);
+    }
     vlc_mutex_unlock( &p_intf->p_sys->status_lock );
 }
 
@@ -660,6 +668,64 @@ static int ReadConfig(intf_thread_t *p_intf, const char *config_file_name)
 
     free(file_contents);
     return VLC_SUCCESS;
+}
+
+static void ProcessObject(intf_thread_t *p_intf, json_value* value)
+{
+    int length, x;
+    if (value == NULL) {
+        return;
+    }
+    length = value->u.object.length;
+    for (x = 0; x < length; x++) {
+        msg_Info(p_intf, "object[%d].name = %s", x, value->u.object.values[x].name);
+        ProcessEvents(p_intf, value->u.object.values[x].value);
+    }
+}
+
+static void ProcessArray(intf_thread_t *p_intf, json_value* value)
+{
+    int length, x;
+    if (value == NULL) {
+        return;
+    }
+    length = value->u.array.length;
+    msg_Info(p_intf, "array");
+    for (x = 0; x < length; x++) {
+        ProcessEvents(p_intf, value->u.array.values[x]);
+    }
+}
+
+static void ProcessEvents(intf_thread_t *p_intf, int64_t video_time)
+{
+    if (p_intf->p_sys->p_events == NULL) {
+        return;
+    }
+    json_value *value = p_intf->p_sys->p_events;
+    int j;
+    switch (value->type) {
+        case json_none:
+            msg_Info(p_intf, "none");
+            break;
+        case json_object:
+            ProcessObject(p_intf, value);
+            break;
+        case json_array:
+            ProcessArray(p_intf, value);
+            break;
+        case json_integer:
+            msg_Info(p_intf, "int: %10" PRId64, value->u.integer);
+            break;
+        case json_double:
+            msg_Info(p_intf, "double: %f", value->u.dbl);
+            break;
+        case json_string:
+            msg_Info(p_intf, "string: %s", value->u.string.ptr);
+            break;
+        case json_boolean:
+            msg_Info(p_intf, "bool: %d", value->u.boolean);
+            break;
+    }
 }
 
 @implementation LXCBAppDelegate
