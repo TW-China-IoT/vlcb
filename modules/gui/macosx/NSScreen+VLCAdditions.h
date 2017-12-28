@@ -31,6 +31,7 @@
 - (BOOL)hasDock;
 - (BOOL)isScreen: (NSScreen*)screen;
 - (CGDirectDisplayID)displayID;
+- (NSRect)autoSelectScreen;
 - (void)blackoutOtherScreens;
 + (void)unblackoutScreens;
 

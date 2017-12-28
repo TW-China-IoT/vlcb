@@ -25,6 +25,7 @@
 #import "NSScreen+VLCAdditions.h"
 #import "CompatibilityFixes.h"
 #import "VLCMainWindow.h"
+#import "VLCMain.h"
 
 @implementation NSScreen (VLCAdditions)
 
@@ -90,6 +91,44 @@ static bool b_old_spaces_style = YES;
 - (CGDirectDisplayID)displayID
 {
     return (CGDirectDisplayID)[[[self deviceDescription] objectForKey: @"NSScreenNumber"] intValue];
+}
+
+- (NSRect)autoSelectScreen
+{
+    NSUInteger screenCount = [[NSScreen screens] count];
+    NSScreen *screen = [[NSScreen screens] objectAtIndex:screenCount - 1];
+    NSRect screen_rect;
+
+    screen_rect = [screen frame];
+    int x = NSMinX(screen_rect);
+    int y = NSMaxY(screen_rect);
+    int w = NSWidth(screen_rect);
+    int h = NSHeight(screen_rect);
+    msg_Info(getIntf(), "screen x %d", x);
+    msg_Info(getIntf(), "screen y %d", y);
+    msg_Info(getIntf(), "screen w %d", w);
+    msg_Info(getIntf(), "screen h %d", h);
+    int hud_x = x;
+    int hud_w = w;
+    int hud_h = h / 4;
+    int hud_y = h - hud_h;
+    var_SetInteger(getIntf(), "hud-x", hud_x);
+    var_SetInteger(getIntf(), "hud-y", hud_y);
+    var_SetInteger(getIntf(), "hud-w", hud_w);
+    var_SetInteger(getIntf(), "hud-h", hud_h);
+    msg_Info(getIntf(), "hud-x %d", hud_x);
+    msg_Info(getIntf(), "hud-y %d", hud_y);
+    msg_Info(getIntf(), "hud-w %d", hud_w);
+    msg_Info(getIntf(), "hud-h %d", hud_h);
+    int player_x = x;
+    int player_w = w;
+    int player_h = h * 3 / 4;
+    int player_y = y;
+    msg_Info(getIntf(), "player-x %d", player_x);
+    msg_Info(getIntf(), "player-y %d", player_y);
+    msg_Info(getIntf(), "player-w %d", player_w);
+    msg_Info(getIntf(), "player-h %d", player_h);
+    return NSMakeRect(player_x, player_y, player_w, player_h);
 }
 
 - (void)blackoutOtherScreens

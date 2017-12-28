@@ -89,6 +89,8 @@ vlc_module_end ()
 
 struct intf_sys_t
 {
+    int stop;
+
     int *pi_socket_listen;
     int i_socket;
     char *psz_unix_path;
@@ -108,6 +110,11 @@ struct intf_sys_t
 
     pid_t pid_hud_video_player;
     char *psz_video_path;
+
+    int hud_x;
+    int hud_y;
+    int hud_w;
+    int hud_h;
 };
 /* Internal state for an instance of the module */
 
@@ -116,8 +123,16 @@ static int StartHUDVideoPlayer(intf_thread_t *p_intf)
     pid_t processId;
     if ((processId = fork()) == 0) {
         char app[] = "/usr/local/bin/ffplay";
+        char x[128], y[128], w[128], h[128];
+        snprintf(x, 128, "%d", p_intf->p_sys->hud_x);
+        snprintf(y, 128, "%d", p_intf->p_sys->hud_y);
+        snprintf(w, 128, "%d", p_intf->p_sys->hud_w);
+        snprintf(h, 128, "%d", p_intf->p_sys->hud_h);
         char * const argv[] = { app,
-            "/usr/local/share/bg.png", NULL };
+           "-xpos", x, "-ypos", y, 
+           "-x", w, "-y", h,
+           "-unix-path", p_intf->p_sys->psz_unix_path,
+           "/usr/local/share/bg.png", NULL };
         if (execv(app, argv) < 0) {
             msg_Err(p_intf, "execv error when start HUD video player");
         }
@@ -147,6 +162,7 @@ static int Open(vlc_object_t *obj)
     if (unlikely(p_sys == NULL))
         return VLC_ENOMEM;
     p_intf->p_sys = p_sys;
+    p_sys->stop = 0;
 
     /* Read settings */
     psz_service_name = var_InheritString(p_intf, "serviceName");
@@ -219,6 +235,13 @@ static int Open(vlc_object_t *obj)
     p_sys->pid_hud_video_player = 0;
     p_sys->psz_video_path = NULL;
 
+    p_sys->hud_x = [p_sys->p_bluetooth_delegate.peripheral autoSelectScreenX];
+    p_sys->hud_y = [p_sys->p_bluetooth_delegate.peripheral autoSelectScreenY];
+    p_sys->hud_w = [p_sys->p_bluetooth_delegate.peripheral autoSelectScreenW];
+    p_sys->hud_h = [p_sys->p_bluetooth_delegate.peripheral autoSelectScreenH];
+
+    msg_Info(p_intf, "x: %d, y: %d, w: %d, h: %d", p_sys->hud_x, p_sys->hud_y, p_sys->hud_w, p_sys->hud_h);
+
     vlc_mutex_init( &p_sys->status_lock );
 
     if( vlc_clone( &p_sys->thread, Run, p_intf, VLC_THREAD_PRIORITY_LOW ) )
@@ -261,8 +284,16 @@ static void Close(vlc_object_t *obj)
         kill(p_sys->pid_hud_video_player, SIGKILL);
     }
 
+    p_sys->stop = 1;
     vlc_cancel( p_sys->thread );
     vlc_join( p_sys->thread, NULL );
+
+    /* Close connection */
+    if( p_sys->i_socket != -1 )
+    {
+        net_Close( p_sys->i_socket );
+        p_sys->i_socket = -1;
+    }
 
     if( p_sys->p_input != NULL )
     {
@@ -417,7 +448,7 @@ static void *Run( void *data )
     /* Register commands that will be cleaned up upon object destruction */
     RegisterCallbacks( p_intf );
 
-    for ( ;; ) {
+    while (p_sys->stop == 0) {
         //msg_Info(p_intf, "loop...");
         char *psz_cmd = NULL;
         bool b_complete;

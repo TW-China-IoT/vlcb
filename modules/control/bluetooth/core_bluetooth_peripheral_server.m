@@ -3,6 +3,7 @@
 #import <CoreBluetooth/CoreBluetooth.h>
 
 #import "core_bluetooth_peripheral_server.h"
+#import "../../../modules/gui/macosx/NSScreen+VLCAdditions.h"
 
 #ifndef LXCBLog
 # define LXCBLog NSLog
@@ -109,6 +110,77 @@
   return [self.peripheral isAdvertising];
 }
 
+- (int)autoSelectScreenX
+{
+    NSUInteger screenCount = [[NSScreen screens] count];
+    NSScreen *screen = [[NSScreen screens] objectAtIndex:screenCount - 1];
+    NSRect screen_rect;
+
+    screen_rect = [screen frame];
+    int x = NSMinX(screen_rect);
+    int y = NSMaxY(screen_rect);
+    int w = NSWidth(screen_rect);
+    int h = NSHeight(screen_rect);
+    int hud_x = x;
+    int hud_w = w;
+    int hud_h = h / 4;
+    int hud_y = h - hud_h;
+    return hud_x;
+}
+
+- (int)autoSelectScreenY
+{
+    NSUInteger screenCount = [[NSScreen screens] count];
+    NSScreen *screen = [[NSScreen screens] objectAtIndex:screenCount - 1];
+    NSRect screen_rect;
+
+    screen_rect = [screen frame];
+    int x = NSMinX(screen_rect);
+    int y = NSMaxY(screen_rect);
+    int w = NSWidth(screen_rect);
+    int h = NSHeight(screen_rect);
+    int hud_x = x;
+    int hud_w = w;
+    int hud_h = h / 4;
+    int hud_y = h - hud_h;
+    return hud_y;
+}
+
+- (int)autoSelectScreenW
+{
+    NSUInteger screenCount = [[NSScreen screens] count];
+    NSScreen *screen = [[NSScreen screens] objectAtIndex:screenCount - 1];
+    NSRect screen_rect;
+
+    screen_rect = [screen frame];
+    int x = NSMinX(screen_rect);
+    int y = NSMaxY(screen_rect);
+    int w = NSWidth(screen_rect);
+    int h = NSHeight(screen_rect);
+    int hud_x = x;
+    int hud_w = w;
+    int hud_h = h / 4;
+    int hud_y = h - hud_h;
+    return hud_w;
+}
+
+- (int)autoSelectScreenH
+{
+    NSUInteger screenCount = [[NSScreen screens] count];
+    NSScreen *screen = [[NSScreen screens] objectAtIndex:screenCount - 1];
+    NSRect screen_rect;
+
+    screen_rect = [screen frame];
+    int x = NSMinX(screen_rect);
+    int y = NSMaxY(screen_rect);
+    int w = NSWidth(screen_rect);
+    int h = NSHeight(screen_rect);
+    int hud_x = x;
+    int hud_w = w;
+    int hud_h = h / 4;
+    int hud_y = h - hud_h;
+    return hud_h;
+}
 
 #pragma mark -
 

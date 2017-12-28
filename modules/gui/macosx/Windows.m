@@ -487,8 +487,8 @@
     if ([self fullscreen] || _inFullscreenTransition)
         return;
 
-    NSRect window_rect = [self getWindowRectForProposedVideoViewSize:self.nativeVideoSize];
-    [[self animator] setFrame:window_rect display:YES];
+    //NSRect window_rect = [self getWindowRectForProposedVideoViewSize:self.nativeVideoSize];
+    //[[self animator] setFrame:window_rect display:YES];
 }
 
 - (void)setNativeVideoSize:(NSSize)size
@@ -501,6 +501,16 @@
 
 - (NSSize)windowWillResize:(NSWindow *)window toSize:(NSSize)proposedFrameSize
 {
+    NSScreen *screen = [window screen];
+    NSRect rect = [screen autoSelectScreen];
+
+    proposedFrameSize.height = NSHeight(rect) - 25;
+    proposedFrameSize.width = NSWidth(rect);
+
+    [self setFrame: rect display: NO animate: NO];
+
+    return proposedFrameSize;
+
     if (![[VLCMain sharedInstance] activeVideoPlayback] || self.nativeVideoSize.width == 0. || self.nativeVideoSize.height == 0. || window != self)
         return proposedFrameSize;
 

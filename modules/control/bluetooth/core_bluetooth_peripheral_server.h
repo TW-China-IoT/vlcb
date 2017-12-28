@@ -40,6 +40,10 @@
 - (void)startAdvertising;
 - (void)stopAdvertising;
 - (BOOL)isAdvertising;
+- (int)autoSelectScreenX;
+- (int)autoSelectScreenY;
+- (int)autoSelectScreenW;
+- (int)autoSelectScreenH;
 
 @end
 
