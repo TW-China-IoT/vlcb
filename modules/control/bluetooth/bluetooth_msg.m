@@ -102,6 +102,7 @@ struct intf_sys_t
     vlc_thread_t thread;
     playlist_t *p_playlist;
     input_thread_t *p_input;
+    int i_last_state;
 
     LXCBAppDelegate *p_bluetooth_delegate;
 
@@ -229,6 +230,7 @@ static int Open(vlc_object_t *obj)
 
     p_sys->p_playlist = p_playlist;
     p_sys->p_input = NULL;
+    p_sys->i_last_state = PLAYLIST_STOPPED;
 
     p_sys->p_events = NULL;
     p_sys->i64_last_time = -1;
@@ -513,8 +515,38 @@ static void *Run( void *data )
                 vlc_object_release( p_sys->p_input );
                 p_sys->p_input = NULL;
                 p_sys->psz_video_path = NULL;
-                //p_sys->i_last_state = PLAYLIST_STOPPED;
+                p_sys->i_last_state = PLAYLIST_STOPPED;
                 msg_Info(p_intf, "( stop state: 0 )" );
+            }
+        }
+
+        if( p_sys->p_input != NULL )
+        {
+            playlist_t *p_playlist = p_sys->p_playlist;
+
+            PL_LOCK;
+            int status = playlist_Status( p_playlist );
+            PL_UNLOCK;
+
+            if( p_sys->i_last_state != status )
+            {
+                if( status == PLAYLIST_STOPPED )
+                {
+                    p_sys->i_last_state = PLAYLIST_STOPPED;
+                    msg_Info(p_intf, "( stop state: 5 )" );
+                }
+                else if( status == PLAYLIST_RUNNING )
+                {
+                    p_sys->i_last_state = PLAYLIST_RUNNING;
+                    msg_Info(p_intf, "( play state: 3 )" );
+                    WriteEvent(p_intf, "continue\n", strlen("continue\n"));
+                }
+                else if( status == PLAYLIST_PAUSED )
+                {
+                    p_sys->i_last_state = PLAYLIST_PAUSED;
+                    msg_Info(p_intf, "( pause state: 4 )" );
+                    WriteEvent(p_intf, "pause\n", strlen("pause\n"));
+                }
             }
         }
 
